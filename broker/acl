@@ -1,0 +1,34 @@
+# Admin
+user admin
+topic readwrite #
+
+# Scheduler
+user scheduler
+topic read sim/+/device/+/job/request
+topic read sim/+/device/+/telemetry/power
+topic write sim/+/device/+/command/schedule
+topic read home/+/device/+/job/request
+topic read home/+/device/+/telemetry/power
+topic read home/+/device/+/status
+topic write home/+/device/+/command/schedule
+topic write home/+/device/+/command/override
+topic write neighborhood/+/aggregate/demand
+topic read control/reset
+topic write control/ack
+
+# Simulator
+user simulator
+topic write sim/+/device/+/job/request
+topic write sim/+/device/+/telemetry/power
+topic read sim/+/device/+/command/schedule
+topic write control/reset
+topic read control/ack
+
+# Device Users Pattern Restrictions
+# Restricts any non-admin device user (e.g. H01-water_heater_01) strictly to H01
+user H01-water_heater_01
+topic write home/H01/device/water_heater_01/telemetry/power
+topic write home/H01/device/water_heater_01/status
+topic write home/H01/device/water_heater_01/job/request
+topic read home/H01/device/water_heater_01/command/schedule
+topic read home/H01/device/water_heater_01/command/override

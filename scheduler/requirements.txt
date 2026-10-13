@@ -1,0 +1,4 @@
+numpy
+pandas
+paho-mqtt>=2.0
+influxdb-client

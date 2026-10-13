@@ -8,3 +8,4 @@ __pycache__/
 .pio/
 influxdb-data/
 venv/
+broker/passwd

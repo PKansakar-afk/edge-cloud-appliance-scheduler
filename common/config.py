@@ -33,3 +33,21 @@ def build_price_array(n=N_MINUTES):
 def is_offpeak(minute):
     h = (minute // 60) % 24
     return h >= OFFPEAK_START_H or h < OFFPEAK_END_H
+
+
+# ---- experiment clock ----
+import os
+from datetime import datetime, timedelta
+
+# Minute 0 of the scheduler's timeline = local midnight on this date (a Monday).
+# Tariff hours are computed relative to it, so keep it at LOCAL midnight (+07:00 for Thailand).
+EPOCH = datetime.fromisoformat(os.getenv("EPOCH", "2026-10-19T00:00:00+07:00"))
+
+
+def to_minute(dt):
+    """Timezone-aware datetime -> integer minutes since EPOCH (rounded down)."""
+    return int((dt - EPOCH).total_seconds() // 60)
+
+
+def from_minute(m):
+    return EPOCH + timedelta(minutes=int(m))
