@@ -6,12 +6,12 @@ import pandas as pd
 
 RAW = Path("data/raw/ukdale")
 OUT = Path("data/processed")
-HOUSES = [1]                  # start with one house, add more later
+HOUSES = [1,2,5]                  # start with one house, add more later
 INCLUDE_MAINS = False         # mains files are huge; turn on once the rest works
 
 # appliance name -> keywords to look for in labels.dat
 FLEXIBLE = {
-    "washing_machine": ["washing"],
+    "washing_machine": ["washing", "washer"],
     "dishwasher": ["dish"],
 }
 
