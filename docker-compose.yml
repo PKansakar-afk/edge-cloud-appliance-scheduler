@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   broker:
     image: eclipse-mosquitto:2
@@ -6,6 +8,8 @@ services:
       - "1883:1883"
     volumes:
       - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./broker/passwd:/mosquitto/config/passwd:ro
+      - ./broker/acl:/mosquitto/config/acl:ro
       - mosquitto-data:/mosquitto/data
     restart: unless-stopped
 
@@ -25,6 +29,41 @@ services:
       - influxdb-data:/var/lib/influxdb2
       - influxdb-config:/etc/influxdb2
     restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    container_name: iot-scheduler
+    environment:
+      MQTT_HOST: broker
+      MQTT_PORT: 1883
+      MQTT_USERNAME: scheduler
+      MQTT_PASSWORD: ${MQTT_SCHEDULER_PASSWORD:-}
+      INFLUXDB_URL: http://tsdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
+      STRATEGY: ${STRATEGY:-dynamic}
+      EPOCH: ${EPOCH:-2026-10-19T00:00:00+07:00}
+    depends_on: [broker, tsdb]
+    restart: unless-stopped
+
+  simulator:
+    build:
+      context: .
+      dockerfile: simulator/Dockerfile
+    profiles: ["sim"]                 # only runs when you ask for it
+    environment:
+      MQTT_HOST: broker
+      MQTT_PORT: 1883
+      MQTT_USERNAME: simulator
+      MQTT_PASSWORD: ${MQTT_SIMULATOR_PASSWORD:-}
+      EPOCH: ${EPOCH:-2026-10-19T00:00:00+07:00}
+      N_HOUSEHOLDS: ${N_HOUSEHOLDS:-10}
+      SEED: ${SEED:-0}
+      SIM_SPEED: ${SIM_SPEED:-0}
+    depends_on: [broker, scheduler]
 
 volumes:
   mosquitto-data:

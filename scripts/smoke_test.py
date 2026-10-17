@@ -36,6 +36,7 @@ def test_mqtt():
             received.set()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.username_pw_set("admin", os.environ["MQTT_ADMIN_PASSWORD"])
     client.on_connect = on_connect
     client.on_subscribe = on_subscribe
     client.on_message = on_message
