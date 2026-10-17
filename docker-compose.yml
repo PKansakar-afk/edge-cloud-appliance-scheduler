@@ -65,6 +65,27 @@ services:
       SIM_SPEED: ${SIM_SPEED:-0}
     depends_on: [broker, scheduler]
 
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: iot-api
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      MQTT_HOST: broker
+      MQTT_PORT: 1883
+      MQTT_USERNAME: api
+      MQTT_PASSWORD: ${MQTT_API_PASSWORD:-}
+      INFLUXDB_URL: http://tsdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
+      API_KEY: ${API_KEY:-}
+      EPOCH: ${EPOCH:-2026-10-19T00:00:00+07:00}
+    depends_on: [broker, tsdb, scheduler]
+    restart: unless-stopped
+    
 volumes:
   mosquitto-data:
   influxdb-data:
