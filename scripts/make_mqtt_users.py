@@ -14,6 +14,7 @@ USERS = {                      # broker username -> .env variable holding its pa
     "scheduler": "MQTT_SCHEDULER_PASSWORD",
     "simulator": "MQTT_SIMULATOR_PASSWORD",
     "H01-water_heater_01": "MQTT_H01_WATER_HEATER_01_PASSWORD",
+    "api": "MQTT_API_PASSWORD",
 }
 
 

@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edge-Cloud Appliance Scheduler</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#667085; --line:#e4e7ec; --accent:#2563eb; --ok:#16a34a; --bad:#dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f141b; --card:#18202b; --text:#e6e9ef; --muted:#98a2b3; --line:#2a3544; --accent:#60a5fa; --ok:#4ade80; --bad:#f87171; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:10px; padding:14px 20px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { font-size:16px; margin:0; flex:1; }
+  main { max-width:1200px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; min-width:0; }
+  .card h2 { font-size:14px; margin:0 0 10px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:900px) { .grid2 { grid-template-columns:1fr; } }
+  .chart { position:relative; height:280px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; }
+  .scroll { overflow:auto; max-height:300px; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:99px; font-size:12px; border:1px solid var(--line); color:var(--muted); }
+  .ok { color:var(--ok); border-color:var(--ok); }
+  .bad { color:var(--bad); border-color:var(--bad); }
+  .muted { color:var(--muted); }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:2px; }
+  input, select, button { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); width:100%; }
+  button { background:var(--accent); color:#fff; border:0; cursor:pointer; }
+  input[type=checkbox] { width:auto; }
+  form { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; align-items:end; }
+  pre { margin:10px 0 0; padding:8px; background:var(--bg); border-radius:6px; overflow:auto; max-height:200px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Edge-Cloud Appliance Scheduler</h1>
+  <span id="bMqtt" class="badge">MQTT</span>
+  <span id="bInflux" class="badge">InfluxDB</span>
+</header>
+<main>
+  <section class="card">
+    <h2>Strategy comparison <span class="muted">(tick runs to overlay them below)</span></h2>
+    <div class="scroll">
+      <table id="runs">
+        <thead><tr><th></th><th>Run</th><th>Strategy</th><th>Houses</th><th>Jobs</th><th>Cost</th><th>Peak kW</th><th>Missed</th><th>Avg delay (min)</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Aggregate neighborhood load <span class="muted">(15-minute peak, kW)</span></h2>
+    <div class="chart"><canvas id="cAgg"></canvas></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Per-household load <span id="houseRun" class="muted"></span></h2>
+      <div class="chart"><canvas id="cHouse"></canvas></div>
+    </section>
+    <section class="card">
+      <h2>Recent decisions <span id="decRun" class="muted"></span></h2>
+      <div class="scroll">
+        <table id="decisions">
+          <thead><tr><th>House</th><th>Device</th><th>Requested</th><th>Start</th><th>Delay</th><th>kW</th><th>Cost</th><th>On time</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Physical node <span id="nodeName" class="muted"></span> <span id="nodeBadge" class="badge">no status yet</span></h2>
+      <p id="nodeSched" class="muted">No schedule received yet.</p>
+      <div class="chart" style="height:200px"><canvas id="cLive"></canvas></div>
+      <p id="nodeLast" class="muted"></p>
+    </section>
+    <section class="card">
+      <h2>Request a schedule</h2>
+      <form id="reqForm">
+        <div><label>House</label><input id="fHouse" value="H01"></div>
+        <div><label>Device</label><input id="fDevice" value="water_heater_01"></div>
+        <div><label>Duration (min)</label><input id="fDur" type="number" min="1" max="1440" value="45"></div>
+        <div><label>Deadline (hours from now)</label><input id="fHours" type="number" min="1" max="72" value="8"></div>
+        <div><label>Priority</label><select id="fPrio"><option>normal</option><option>urgent</option></select></div>
+        <div><label>API key</label><input id="fKey" type="password" autocomplete="off"></div>
+        <div><button type="submit">Request</button></div>
+      </form>
+      <p class="muted">Uses the current time, so the scheduler's timeline (EPOCH) must cover today.</p>
+      <pre id="reqOut" hidden></pre>
+    </section>
+  </div>
+</main>
+
+<script src="chart.umd.min.js"></script>
+<script>
+const NODE = { house: 'H01', device: 'water_heater_01' };
+const COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2'];
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = iso => new Date(iso).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const fmtHour = v => 'D' + Math.floor(v / 24) + ' ' + String(Math.round(((v % 24) + 24) % 24)).padStart(2, '0') + ':00';
+const toXY = (arr, stepMin) => arr.map((y, i) => ({ x: i * stepMin / 60, y }));
+
+async function get(path) {
+  const r = await fetch('/api/v1' + path);
+  if (!r.ok) throw new Error(path + ' -> ' + r.status);
+  return r.json();
+}
+
+function mkChart(id, o = {}) {
+  return new Chart($(id), {
+    type: 'line', data: { datasets: [] },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      elements: { point: { radius: 0 }, line: { borderWidth: 1.5 } },
+      scales: {
+        x: { type: 'linear', min: o.xmin ?? 0, ticks: { stepSize: o.step, callback: o.fmt } },
+        y: { beginAtZero: true, stacked: !!o.stacked, title: { display: true, text: o.ytitle || 'kW' } },
+      },
+      plugins: { legend: { display: o.legend !== false, labels: { boxWidth: 10 } } },
+    },
+  });
+}
+const aggChart = mkChart('cAgg', { step: 12, fmt: fmtHour });
+const houseChart = mkChart('cHouse', { step: 24, fmt: fmtHour, stacked: true, legend: false });
+const liveChart = mkChart('cLive', { xmin: -30, ytitle: 'W', fmt: v => v + ' min' });
+
+const state = { runs: [], checked: new Set(), first: true };
+
+async function refreshRuns() {
+  state.runs = await get('/runs');
+  if (state.first && state.runs.length) {
+    state.runs.slice(0, 4).forEach(r => state.checked.add(r.run_id));
+    state.first = false;
+  }
+  $('runs').querySelector('tbody').innerHTML = state.runs.map(r => `<tr>
+    <td><input type="checkbox" data-run="${esc(r.run_id)}" ${state.checked.has(r.run_id) ? 'checked' : ''}></td>
+    <td>${esc(r.run_id)}</td><td>${esc(r.strategy)}</td><td>${r.households}</td><td>${r.jobs}</td>
+    <td>${r.cost.toFixed(2)}</td><td>${r.peak_kw.toFixed(2)}</td>
+    <td>${(100 * r.miss_rate).toFixed(1)}%</td><td>${r.avg_delay_min.toFixed(0)}</td></tr>`).join('')
+    || '<tr><td colspan="9" class="muted">No runs yet. Start the simulator.</td></tr>';
+}
+
+async function refreshCharts() {
+  const ids = [...state.checked].filter(id => state.runs.some(r => r.run_id === id)).slice(0, 6);
+  const loads = await Promise.all(ids.map(id => get(`/runs/${encodeURIComponent(id)}/load?step=15`).catch(() => null)));
+
+  aggChart.data.datasets = ids.map((id, i) => loads[i] && {
+    label: id, data: toXY(loads[i].aggregate_kw, loads[i].step_min), borderColor: COLORS[i % COLORS.length],
+  }).filter(Boolean);
+  aggChart.update();
+
+  const k = loads.findIndex(Boolean);
+  const hs = k >= 0 ? Object.entries(loads[k].households_kw) : [];
+  houseChart.data.datasets = hs.map(([h, arr], i) => ({
+    label: h, data: toXY(arr, loads[k].step_min), fill: true, borderWidth: 0,
+    backgroundColor: `hsl(${Math.round(i * 360 / hs.length)}, 65%, 55%)`,
+  }));
+  houseChart.update();
+  $('houseRun').textContent = k >= 0 ? '(' + ids[k] + ')' : '';
+
+  const tb = $('decisions').querySelector('tbody');
+  if (k < 0) { tb.innerHTML = ''; $('decRun').textContent = ''; return; }
+  const rows = await get(`/runs/${encodeURIComponent(ids[k])}/decisions?limit=30`);
+  $('decRun').textContent = '(' + ids[k] + ')';
+  tb.innerHTML = rows.map(r => `<tr><td>${esc(r.house)}</td><td>${esc(r.device)}</td><td>${fmt(r.release)}</td>
+    <td>${fmt(r.start)}</td><td>${r.delay_min} min</td><td>${r.kw.toFixed(2)}</td><td>${r.cost.toFixed(3)}</td>
+    <td>${r.deadline_met ? '✓' : '✗'}</td></tr>`).join('');
+}
+
+async function refreshNode() {
+  $('nodeName').textContent = `${NODE.house} / ${NODE.device}`;
+  const devs = await get('/devices');
+  const d = devs.find(x => x.house === NODE.house && x.device === NODE.device);
+  const st = d && d.status, badge = $('nodeBadge');
+  if (!st) { badge.className = 'badge'; badge.textContent = 'no status yet'; }
+  else if (st.online) { badge.className = 'badge ok'; badge.textContent = 'online' + (st.safety_state ? ' · ' + st.safety_state : ''); }
+  else { badge.className = 'badge bad'; badge.textContent = 'offline'; }
+
+  const s = d && d.schedule;
+  $('nodeSched').innerHTML = s && s.status === 'scheduled'
+    ? `Last schedule <b>${esc(s.schedule_id)}</b>: ${fmt(s.start)} → ${fmt(s.end)}, estimated cost ${s.estimated_cost}`
+    : 'No schedule received yet.';
+
+  const pts = await get(`/live/${NODE.house}/${NODE.device}?minutes=30`);
+  const now = Date.now();
+  liveChart.data.datasets = [{ label: 'Power (W)', borderColor: COLORS[0],
+    data: pts.map(p => ({ x: (Date.parse(p.t) - now) / 60000, y: p.watts })) }];
+  liveChart.update();
+  $('nodeLast').textContent = pts.length
+    ? `Last reading: ${pts[pts.length - 1].watts.toFixed(1)} W` : 'No readings in the last 30 minutes.';
+}
+
+async function refreshHealth() {
+  const h = await get('/health');
+  $('bMqtt').className = 'badge ' + (h.mqtt ? 'ok' : 'bad');
+  $('bInflux').className = 'badge ' + (h.influxdb ? 'ok' : 'bad');
+}
+
+$('runs').addEventListener('change', e => {
+  const id = e.target.dataset.run;
+  if (!id) return;
+  e.target.checked ? state.checked.add(id) : state.checked.delete(id);
+  refreshCharts().catch(console.error);
+});
+
+$('reqForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = {
+    house_id: $('fHouse').value, device_id: $('fDevice').value, requested_by: 'user',
+    deadline: new Date(Date.now() + $('fHours').value * 3600e3).toISOString(),
+    duration_minutes: +$('fDur').value, priority: $('fPrio').value,
+  };
+  const out = $('reqOut');
+  out.hidden = false;
+  try {
+    const r = await fetch('/api/v1/schedule', {
+      method: 'POST', body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': $('fKey').value },
+    });
+    out.textContent = r.status + ' ' + JSON.stringify(await r.json(), null, 2);
+  } catch (err) { out.textContent = String(err); }
+  tick();
+});
+
+let busy = false;
+async function tick() {
+  if (busy) return;
+  busy = true;
+  for (const fn of [async () => { await refreshRuns(); await refreshCharts(); }, refreshNode, refreshHealth]) {
+    try { await fn(); } catch (err) { console.error(err); }
+  }
+  busy = false;
+}
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

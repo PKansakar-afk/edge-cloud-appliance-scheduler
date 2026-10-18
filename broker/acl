@@ -32,3 +32,11 @@ topic write home/H01/device/water_heater_01/status
 topic write home/H01/device/water_heater_01/job/request
 topic read home/H01/device/water_heater_01/command/schedule
 topic read home/H01/device/water_heater_01/command/override
+
+# REST API: relays job requests, reads schedules and device status
+user api
+topic write home/+/device/+/job/request
+topic write sim/+/device/+/job/request
+topic read home/+/device/+/command/schedule
+topic read sim/+/device/+/command/schedule
+topic read home/+/device/+/status
