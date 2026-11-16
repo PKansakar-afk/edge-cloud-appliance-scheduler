@@ -11,6 +11,7 @@ from typing import Literal
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Path, Query
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 from pydantic import AwareDatetime, BaseModel, Field
 
 from api import data
@@ -113,6 +114,13 @@ def live(house: str = Path(pattern=ID_RE), device: str = Path(pattern=ID_RE),
          minutes: int = Query(30, ge=1, le=240)):
     return guard(reader.live_power, house, device, minutes)
 
+@router.get("/export/power.csv")
+def export_power(house: str = Query("H01", pattern=ID_RE),
+                 device: str = Query("water_heater_01", pattern=ID_RE),
+                 days: int = Query(6, ge=1, le=14)):
+    rows = guard(lambda: list(reader.power_export(house, device, days)))
+    return Response(content=data.rows_to_csv(rows), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="power_{house}_{device}_{days}d.csv"'})
 
 # ---------- the one write endpoint (the contract from the paper) ----------
 @router.post("/schedule", dependencies=[Depends(require_key)])
