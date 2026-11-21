@@ -5,6 +5,8 @@ import re
 import numpy as np
 import pandas as pd
 from influxdb_client import InfluxDBClient
+import csv 
+import io
 
 WIDE_RANGE = "start: 2020-01-01T00:00:00Z, stop: 2100-01-01T00:00:00Z"   # data is stamped with simulated time
 SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -58,6 +60,20 @@ from(bucket: "{self.bucket}")
         pts = [{"t": rec.get_time().isoformat(), "watts": float(rec.get_value())}
                for table in self.q.query(flux) for rec in table.records]
         return sorted(pts, key=lambda p: p["t"])
+
+    def power_export(self, house, device, days):
+        """Raw power readings from the physical node, oldest first."""
+        flux = f'''
+from(bucket: "{self.bucket}")
+  |> range(start: -{int(days)}d)
+  |> filter(fn: (r) => r._measurement == "power" and r._field == "watts" and r.root == "home"
+                       and r.house == "{_safe(house)}" and r.device == "{_safe(device)}")
+  |> group()
+  |> keep(columns: ["_time", "_value"])
+  |> sort(columns: ["_time"])
+'''
+        for rec in self.q.query_stream(flux):
+            yield rec.get_time().isoformat(), float(rec.get_value())
 
 
 def prepare(df):
@@ -140,3 +156,11 @@ def decisions_table(df, limit):
         "delay_min": int(r.delay_min), "kw": round(float(r.kw), 3),
         "cost": round(float(r.cost), 4), "deadline_met": bool(int(r.deadline_met)),
     } for r in rows.itertuples()]
+
+def rows_to_csv(rows):
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["_time", "_value"])
+    for t, v in rows:
+        w.writerow([t, v])
+    return buf.getvalue()

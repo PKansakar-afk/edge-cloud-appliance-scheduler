@@ -77,8 +77,20 @@
     <section class="card">
       <h2>Physical node <span id="nodeName" class="muted"></span> <span id="nodeBadge" class="badge">no status yet</span></h2>
       <p id="nodeSched" class="muted">No schedule received yet.</p>
+      <div style="max-width:160px; margin-bottom:8px">
+        <label for="liveRange">Time range</label>
+        <select id="liveRange">
+          <option value="30" selected>Last 30 min</option>
+          <option value="60">Last 1 hour</option>
+          <option value="120">Last 2 hours</option>
+          <option value="720">Last 12 hours</option>
+          <option value="1440">Last 24 hours</option>
+          <option value="10080">Last 7 days</option>
+        </select>
+      </div>
       <div class="chart" style="height:200px"><canvas id="cLive"></canvas></div>
       <p id="nodeLast" class="muted"></p>
+      <p><a href="/api/v1/export/power.csv?house=H01&device=water_heater_01&days=6" download>Download readings (CSV, last 6 days)</a></p>
     </section>
     <section class="card">
       <h2>Request a schedule</h2>
@@ -128,9 +140,31 @@ function mkChart(id, o = {}) {
     },
   });
 }
+// Live node chart range. Declared before the chart so the tick callback can read it.
+const LIVE_STEP = { 30: 5, 60: 10, 120: 20, 720: 120, 1440: 240, 10080: 1440 }; // tick spacing, minutes
+const LIVE_REFRESH_MS = { 30: 5000, 60: 5000, 120: 10000, 720: 30000, 1440: 30000, 10080: 60000 };
+const liveState = { minutes: 30, fetchedAt: 0 };
+const fmtLive = v => {
+  const t = new Date(Date.now() + v * 60000);
+  return liveState.minutes > 1440
+    ? t.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+    : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+// Average points into at most `max` buckets so a 7-day range doesn't choke the chart.
+function downsample(pts, max = 600) {
+  if (pts.length <= max) return pts;
+  const size = pts.length / max, out = [];
+  for (let i = 0; i < max; i++) {
+    const s = pts.slice(Math.floor(i * size), Math.floor((i + 1) * size));
+    if (!s.length) continue;
+    out.push({ x: s.reduce((a, p) => a + p.x, 0) / s.length, y: s.reduce((a, p) => a + p.y, 0) / s.length });
+  }
+  return out;
+}
+
 const aggChart = mkChart('cAgg', { step: 12, fmt: fmtHour });
 const houseChart = mkChart('cHouse', { step: 24, fmt: fmtHour, stacked: true, legend: false });
-const liveChart = mkChart('cLive', { xmin: -30, ytitle: 'W', fmt: v => v + ' min' });
+const liveChart = mkChart('cLive', { xmin: -30, step: 5, ytitle: 'W', fmt: fmtLive });
 
 const state = { runs: [], checked: new Set(), first: true };
 
@@ -189,14 +223,30 @@ async function refreshNode() {
     ? `Last schedule <b>${esc(s.schedule_id)}</b>: ${fmt(s.start)} → ${fmt(s.end)}, estimated cost ${s.estimated_cost}`
     : 'No schedule received yet.';
 
-  const pts = await get(`/live/${NODE.house}/${NODE.device}?minutes=30`);
+  // Long ranges are heavy, so refetch them less often (a range change forces an immediate fetch).
+  const mins = liveState.minutes;
+  if (Date.now() - liveState.fetchedAt < LIVE_REFRESH_MS[mins]) return;
+  liveState.fetchedAt = Date.now();
+
+  const pts = await get(`/live/${NODE.house}/${NODE.device}?minutes=${mins}`);
+  if (mins !== liveState.minutes) return; // user changed range while this was in flight
   const now = Date.now();
-  liveChart.data.datasets = [{ label: 'Power (W)', borderColor: COLORS[0],
-    data: pts.map(p => ({ x: (Date.parse(p.t) - now) / 60000, y: p.watts })) }];
+  const xy = pts.map(p => ({ x: (Date.parse(p.t) - now) / 60000, y: p.watts }));
+  liveChart.options.scales.x.min = -mins;
+  liveChart.options.scales.x.ticks.stepSize = LIVE_STEP[mins];
+  liveChart.data.datasets = [{ label: 'Power (W)', borderColor: COLORS[0], data: downsample(xy) }];
   liveChart.update();
+  const label = $('liveRange').selectedOptions[0].textContent.toLowerCase();
   $('nodeLast').textContent = pts.length
-    ? `Last reading: ${pts[pts.length - 1].watts.toFixed(1)} W` : 'No readings in the last 30 minutes.';
+    ? `Last reading: ${pts[pts.length - 1].watts.toFixed(1)} W (${pts.length} readings, ${label})`
+    : `No readings in the ${label}.`;
 }
+
+$('liveRange').addEventListener('change', e => {
+  liveState.minutes = +e.target.value;
+  liveState.fetchedAt = 0; // force refetch now
+  refreshNode().catch(console.error);
+});
 
 async function refreshHealth() {
   const h = await get('/health');
